@@ -241,7 +241,7 @@ export default function ViewResults() {
                      <div style={{marginBottom: '1rem'}}>
                          <DatePicker 
                              selected={newDeadline} 
-                             onChange={(date) => setNewDeadline(date)} 
+                             onChange={(date: Date | null) => setNewDeadline(date)} 
                              showTimeSelect
                              dateFormat="MMMM d, yyyy h:mm aa"
                              className={styles.input} // Reusing custom input style
