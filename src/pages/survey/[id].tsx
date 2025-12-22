@@ -143,43 +143,54 @@ export default function TakeSurvey() {
           const ephemeralAddr = ephemeralKeypair.getPublicKey().toSuiAddress();
           console.log("Ephemeral Address:", ephemeralAddr);
 
-          tx.setSender(ephemeralAddr);
+          // tx.setSender(ephemeralAddr); // Removed to avoid conflict
 
           const txBytes = await tx.build({ client: suiClient, onlyTransactionKind: true });
           const txBase64 = Buffer.from(txBytes).toString('base64');
 
-          // Request Sponsorship...
+          // Step 1: Request Sponsorship
           const sponsorRes = await fetch('/api/sponsor', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                  sender: ephemeralAddr,
-                  bytes: txBase64
+                  network: 'testnet',
+                  transactionBlockKindBytes: txBase64,
+                  sender: ephemeralAddr
               })
           });
 
-          if (!sponsorRes.ok) throw new Error("Sponsorship request failed");
+          if (!sponsorRes.ok) {
+              const errData = await sponsorRes.json().catch(() => ({}));
+              throw new Error("Sponsorship request failed: " + (errData.message || sponsorRes.statusText));
+          }
           
-          const { sponsoredBytes, sponsorSignature } = await sponsorRes.json();
+          const sponsorData = await sponsorRes.json();
+          const sponsoredBytes = Uint8Array.from(Buffer.from(sponsorData.bytes, 'base64'));
 
-          // Sign and Execute
-          const sponsoredTxBytes = Buffer.from(sponsoredBytes, 'base64');
-          const { signature: ephemeralSignature } = await ephemeralKeypair.signTransaction(sponsoredTxBytes);
+          // Step 2: Sign with Ephemeral Key
+          const { signature: ephemeralSignature } = await ephemeralKeypair.signTransaction(sponsoredBytes);
 
-          const executeRes = await suiClient.executeTransactionBlock({
-              transactionBlock: sponsoredTxBytes,
-              signature: [ephemeralSignature, sponsorSignature],
-              options: {
-                  showEffects: true,
-                  showEvents: true
-              }
+          // Step 3: Execute via Backend
+          toast.loading('Submitting to Enoki...', { id: toastId });
+          const executeRes = await fetch('/api/sponsor', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                  digest: sponsorData.digest,
+                  signature: ephemeralSignature
+              })
           });
 
-          if (executeRes.effects?.status.status === 'success') {
+          const executeData = await executeRes.json();
+          
+          if (!executeRes.ok) throw new Error("Enoki Execution Failed: " + (executeData.message || 'Unknown error'));
+
+          // Enoki returns { data: { digest: "..." } } on success
+          if (executeData.effects?.status.status === 'success' || executeData.digest || executeData.data?.digest) {
               toast.success("Response Submitted (Gasless)!", { id: toastId });
               router.push('/');
           } else {
-              throw new Error("Gasless execution failed: " + executeRes.effects?.status.error);
+              throw new Error("Gasless execution status unknown. Response: " + JSON.stringify(executeData));
           }
       }
 

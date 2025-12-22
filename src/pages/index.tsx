@@ -1,9 +1,27 @@
-import { ConnectButton } from '@mysten/dapp-kit';
+import { ConnectButton, useCurrentAccount, useDisconnectWallet } from '@mysten/dapp-kit';
+import { useEnokiFlow } from '@mysten/enoki/react';
 import Head from 'next/head';
 import Link from 'next/link';
 import styles from '@/styles/Home.module.css';
+import { useState } from 'react';
+import { LoginModal } from '@/components/LoginModal';
 
 export default function Home() {
+  const [isModalOpen, setModalOpen] = useState(false);
+  const account = useCurrentAccount();
+  const { mutate: disconnect } = useDisconnectWallet();
+  const flow = useEnokiFlow();
+
+  const handleDisconnect = async () => {
+      // Disconnect both to be safe
+      disconnect();
+      try {
+        await flow.logout();
+      } catch (e) {
+          console.error("Enoki logout error:", e);
+      }
+  };
+
   return (
     <>
       <Head>
@@ -13,11 +31,42 @@ export default function Home() {
         <link rel="icon" href="/favicon.ico" />
       </Head>
 
+      <LoginModal isOpen={isModalOpen} onClose={() => setModalOpen(false)} />
+
       <header className={styles.header}>
         <div className={styles.logo}>Manta 魟</div>
         <div className={styles.headerRight}>
              <Link href="/dashboard" className={styles.navLink}>Dashboard</Link>
-             <ConnectButton />
+             
+             {account ? (
+                 <button 
+                     onClick={handleDisconnect}
+                     title="Click to Disconnect"
+                     style={{
+                         display: 'flex', 
+                         alignItems: 'center', 
+                         gap: '8px', 
+                         padding: '8px 16px', 
+                         background: '#f7fafc', 
+                         borderRadius: '20px', 
+                         border: '1px solid #edf2f7',
+                         fontSize: '0.9rem',
+                         fontWeight: 500,
+                         color: '#4a5568',
+                         cursor: 'pointer',
+                         transition: 'background 0.2s'
+                     }}
+                     onMouseOver={(e) => e.currentTarget.style.background = '#edf2f7'}
+                     onMouseOut={(e) => e.currentTarget.style.background = '#f7fafc'}
+                 >
+                    <span style={{width: 8, height: 8, background: '#48bb78', borderRadius: '50%', display: 'inline-block'}}></span>
+                    {account.address.slice(0, 4)}...{account.address.slice(-4)}
+                 </button>
+             ) : (
+                 <button className="btn btn-primary" onClick={() => setModalOpen(true)} style={{padding: '0.5rem 1.25rem', fontSize: '0.9rem'}}>
+                    Login / Connect
+                 </button>
+             )}
         </div>
       </header>
 

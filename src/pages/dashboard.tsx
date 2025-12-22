@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import Head from 'next/head';
 import Link from 'next/link';
-import { useSuiClient, useCurrentAccount } from '@mysten/dapp-kit';
+import { useSuiClient, useCurrentAccount, useResolveSuiNSName } from '@mysten/dapp-kit';
 import { PACKAGE_ID, MODULE_NAME } from '@/lib/constants';
 import styles from '@/styles/Dashboard.module.css';
 import toast from 'react-hot-toast';
@@ -19,6 +19,7 @@ export default function Dashboard() {
   const suiClient = useSuiClient();
   const account = useCurrentAccount();
   const [surveys, setSurveys] = useState<SurveySummary[]>([]);
+  const { data: suiNsName } = useResolveSuiNSName(account?.address);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -107,7 +108,9 @@ export default function Dashboard() {
       <div className={styles.container}>
         <div className={styles.header}>
             <div>
-                <h1 className={styles.title} style={{marginBottom: 8}}>Dashboard</h1>
+                <h1 className={styles.title} style={{marginBottom: 8}}>
+                  Welcome, {suiNsName || (account?.address ? `${account.address.slice(0,6)}...${account.address.slice(-4)}` : 'Guest')}
+                </h1>
                 <p style={{color: 'var(--color-text-muted)'}}>Manage your active surveys and analyzing results.</p>
             </div>
             <div style={{display: 'flex', alignItems: 'center', gap: 16}}>

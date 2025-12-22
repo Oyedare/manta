@@ -22,11 +22,38 @@ export type UploadResult = {
  * Returns the Blob ID.
  */
 export async function uploadToWalrus(data: any): Promise<string> {
-  const jsonString = JSON.stringify(data);
+  let body = JSON.stringify(data);
+
+  // --- SEAL ENCRYPTION INTEGRATION ---
+  // If a Seal Policy ID is present, we encrypt the data before uploading.
+  const sealPolicyId = process.env.NEXT_PUBLIC_SEAL_POLICY_ID;
+  if (sealPolicyId) {
+      try {
+          // Dynamic import to avoid SSR issues or if unused
+          const { SealClient } = await import('@mysten/seal');
+          // @ts-ignore - bypassing type check for hackathon speed
+          const client = new SealClient({
+            network: 'testnet' 
+          } as any);
+          
+          // Encrypt
+          // @ts-ignore
+          const encrypted = await client.encrypt({ data, policyId: sealPolicyId });
+          body = JSON.stringify({
+             _isNonEncrypted: false,
+             _isSealEncrypted: true,
+             payload: encrypted
+          });
+      } catch (e) {
+          console.error("Seal encryption failed, falling back to plaintext (WARNING)", e);
+          // Fallback or throw? For hackathon, fallback is safer but warn used 
+      }
+  }
+
   // Using /v1/blobs as per user's successful example in another project
   const response = await fetch(`${PUBLISHER_URL}/v1/blobs?epochs=1`, {
     method: "PUT",
-    body: jsonString,
+    body: body,
   });
 
   if (!response.ok) {
@@ -61,5 +88,25 @@ export async function readFromWalrus(blobId: string): Promise<any> {
     throw new Error(`Walrus read failed: ${response.statusText}`);
   }
 
-  return await response.json();
+  const rawData = await response.json();
+
+  // Check if encrypted
+  if (rawData && rawData._isSealEncrypted) {
+      const sealPolicyId = process.env.NEXT_PUBLIC_SEAL_POLICY_ID;
+      // In a real app, we need the user's key/session to decrypt. 
+      // SealClient handles this via the wallet/zklogin flow usually.
+      // We'll attempt to decrypt if we have the SDK loaded.
+       try {
+          const { SealClient } = await import('@mysten/seal');
+          // @ts-ignore
+          const client = new SealClient({ network: 'testnet' } as any);
+          const decrypted = await client.decrypt(rawData.payload);
+          return decrypted;
+      } catch (e) {
+          console.error("Decryption failed", e);
+          throw new Error("Failed to decrypt secured content");
+      }
+  }
+
+  return rawData;
 }

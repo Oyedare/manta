@@ -2,7 +2,7 @@ import { useState } from 'react';
 import Head from 'next/head';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useSuiClient, useCurrentAccount, useSignAndExecuteTransaction } from '@mysten/dapp-kit';
+import { useSuiClient, useCurrentAccount, useSignTransaction } from '@mysten/dapp-kit';
 import { Transaction } from '@mysten/sui/transactions';
 import { uploadToWalrus } from '@/lib/walrus';
 import { PACKAGE_ID, MODULE_NAME } from '@/lib/constants';
@@ -25,7 +25,7 @@ export default function CreateValidSurvey() {
   const router = useRouter();
   const account = useCurrentAccount();
   const suiClient = useSuiClient();
-  const { mutate: signAndExecute } = useSignAndExecuteTransaction();
+  const { mutateAsync: signTransaction } = useSignTransaction();
 
   // State
   const [title, setTitle] = useState('');
@@ -142,7 +142,9 @@ export default function CreateValidSurvey() {
       
       toast.loading('Confirming transaction...', { id: toastId });
 
-      // Build Transaction
+      console.log("Building tx for Sender:", account.address);
+
+      // Build Transaction (GasLess)
       const tx = new Transaction();
       tx.moveCall({
           target: `${PACKAGE_ID}::${MODULE_NAME}::create_survey`,
@@ -153,30 +155,67 @@ export default function CreateValidSurvey() {
               tx.pure.u64(deadlineDate.getTime())
           ]
       });
+      // tx.setSender(account.address); // REMOVED: Do not set sender here for Kind bytes
 
-      // Sign and Execute
-      signAndExecute({
-          transaction: tx,
-      }, {
-          onSuccess: async (result) => {
-              toast.loading('Finalizing on-chain...', { id: toastId });
-              try {
-                  const fullTx = await suiClient.waitForTransaction({ 
-                      digest: result.digest, 
-                      options: { showEvents: true, showEffects: true }
-                  });
-                  finalizeCreation(fullTx, blobId, toastId);
-              } catch (e) {
-                  console.error("Error waiting for tx:", e);
-                  toast.success(`Survey created! (ID unknown)`, { id: toastId });
-                  router.push('/dashboard');
-              }
-          },
-          onError: (e) => {
-              console.error(e);
-              toast.error("Failed to create survey. " + e.message, { id: toastId });
-          }
+      // Get transaction bytes
+      const txBytes = await tx.build({ client: suiClient, onlyTransactionKind: true });
+      const txBytesBase64 = Buffer.from(txBytes).toString('base64');
+
+      const payload = JSON.stringify({
+          network: 'testnet',
+          transactionBlockKindBytes: txBytesBase64,
+          sender: account.address
       });
+      console.log("SENDING PAYLOAD:", payload);
+
+      // Request Sponsorship from Backend
+      toast.loading('Requesting sponsorship...', { id: toastId });
+      const sponsorRes = await fetch('/api/sponsor', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: payload
+      });
+
+      if (!sponsorRes.ok) {
+          const errorData = await sponsorRes.json().catch(() => ({ message: 'Unknown error' }));
+          throw new Error(`Sponsorship failed: ${errorData.message}`);
+      }
+      
+      const sponsorData = await sponsorRes.json();
+      console.log("Sponsor Data Recvd:", sponsorData);
+      const sponsoredBytes = Uint8Array.from(Buffer.from(sponsorData.bytes, 'base64'));
+
+      // Sign the sponsored transaction
+      // EXPLICITLY pass the account to ensure we sign as the Sender
+      const signResult = await signTransaction({
+          transaction: Transaction.from(sponsoredBytes), 
+          account: account, 
+          chain: 'sui:testnet' // Good practice to specify
+      });
+      console.log("User Sign Result:", signResult);
+      const { signature, bytes: signedBytes } = signResult; 
+
+      toast.loading('Submitting to Enoki...', { id: toastId });
+
+      // Step 2: Send User Signature to Backend to Execute
+      const executeRes = await fetch('/api/sponsor', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+              digest: sponsorData.digest,
+              signature: signature
+          })
+      });
+
+      if (!executeRes.ok) {
+          const errData = await executeRes.json();
+          throw new Error(`Enoki Execution Failed: ${errData.message}`);
+      }
+
+      const txResp = await executeRes.json();
+      console.log("FINAL EXECUTION RESULT:", txResp);
+      
+      finalizeCreation(txResp, blobId, toastId);
 
     } catch (e: any) {
       console.error(e);
@@ -212,6 +251,8 @@ export default function CreateValidSurvey() {
           </Link>
           <div style={{ fontWeight: 600 }}>Create New Survey</div>
         </div>
+        
+
 
         <div className={styles.formArea}>
           <div className={styles.card}>
